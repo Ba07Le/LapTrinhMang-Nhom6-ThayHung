@@ -85,9 +85,7 @@ Xây dựng một ứng dụng desktop cho phép người dùng:
 
 ---
 
-## 7. Kế hoạch thực hiện
-
-## 8. Tài liệu tham khảo
+## 7. Tài liệu tham khảo
 
 - RFC 5321 — Simple Mail Transfer Protocol (SMTP)
 - RFC 3501 — Internet Message Access Protocol (IMAP)
@@ -95,5 +93,3 @@ Xây dựng một ứng dụng desktop cho phép người dùng:
 - Python Docs: [smtplib](https://docs.python.org/3/library/smtplib.html), [imaplib](https://docs.python.org/3/library/imaplib.html)
 
 ---
-
-## 9. Cấu trúc thư mục dự kiến
