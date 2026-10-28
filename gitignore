@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Downloaded email attachments
+downloads/
+backend/downloads/
+
+# Wireshark TLS key logs (can decrypt captured traffic)
+*.keys
+tls.keys
+
+# Wireshark captures (remove this line if your report needs them in the repo)
+*.pcap
+*.pcapng
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
