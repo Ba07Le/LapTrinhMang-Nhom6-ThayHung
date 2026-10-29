@@ -1,56 +1,67 @@
+import html as htmllib
+import re
+import threading
+from datetime import datetime
+from email.utils import parseaddr, parsedate_to_datetime
+
 import customtkinter as ctk
+
+from backend.imap_client import ImapClient   # backend nhận thư của nhóm
+from backend.mail_utils import MailError
 
 ctk.set_appearance_mode("light")
 
 BLUE, BG, WHITE, GRAY, SEL = "#1a6cf0", "#f4f7fc", "#ffffff", "#6b7280", "#e6f0ff"
-
 GREEN, RED = "#16a34a", "#dc2626"
+COLORS = ["#2563eb", "#ea4335", "#22a559", "#7c3aed", "#f59e0b", "#1877f2", "#ef4444"]
 
-NAV = [("✉", "Hộp thư đến", 6), ("➤", "Đã gửi", 0), ("🗎", "Thư nháp", 2)]
-
-# (chữ cái, màu, tên, email, tiêu đề, nội dung, giờ, có đính kèm?)
-MAILS = [
-    ("Q", "#2563eb", "Quân Lê Hồng", "lehongquan268@gmail.com", "Re: Tiến độ đồ án",
-     "Ok bạn, mình đã nhận được file.\nSẽ xem và phản hồi sớm nhé.\n\nCảm ơn bạn!\n\n--\nQuân Lê Hồng",
-     "10:24", True),
-    ("G", "#ea4335", "Google", "no-reply@google.com", "Cảnh báo bảo mật",
-     "Mới đây, chúng tôi phát hiện có hoạt động đăng nhập mới vào tài khoản của bạn.", "08:15", False),
-    ("T", "#22a559", "Thắng Nguyễn Quốc", "thang@gmail.com", "Tài liệu nhóm",
-     "Mình đã cập nhật file tài liệu trên Drive. Bạn xem giúp nhé!", "Hôm qua", False),
-    ("M", "#7c3aed", "Marketing Team", "mkt@shop.com", "Khuyến mãi đặc biệt",
-     "Chương trình khuyến mãi tháng 4 với nhiều ưu đãi hấp dẫn...", "Hôm qua", False),
-    ("N", "#f59e0b", "Nguyễn Văn A", "vana@gmail.com", "Lịch họp nhóm",
-     "Chiều nay 14h chúng ta họp online nhé!", "Hôm qua", False),
-    ("F", "#1877f2", "Facebook", "security@facebook.com", "Thông báo đăng nhập",
-     "Bạn vừa đăng nhập vào tài khoản Facebook từ thiết bị mới...", "Thứ 5", False),
-    ("T", "#ef4444", "Trần Thị B", "thib@gmail.com", "Tài liệu tham khảo",
-     "Mình gửi kèm một số tài liệu tham khảo cho đồ án nhé!", "Thứ 4", False),
-]
+NAV = [("✉", "Hộp thư đến"), ("➤", "Đã gửi"), ("🗎", "Thư nháp")]
 
 
-def ket_noi(email, password):
-    """HÀM GIẢ (chờ backend). Trả về (thành công?, thông báo).
-    Sau này chỉ cần thay nội dung hàm này bằng hàm đăng nhập thật."""
-    if "@" not in email:
-        return False, "Email không hợp lệ"
-    if len(password) < 4:
-        return False, "Mật khẩu không đúng hoặc quá ngắn"
-    return True, "Kết nối thành công"
-
-
-GIA_LAP_LOI_MANG = False  # đổi thành True để thử màn hình báo lỗi khi tải thư
-
-
-def lay_thu():
-    """HÀM GIẢ (chờ backend). Trả về (True, danh sách thư) hoặc (False, thông báo lỗi)."""
-    if GIA_LAP_LOI_MANG:
-        return False, "Không tải được thư. Hãy kiểm tra kết nối mạng."
-    return True, MAILS
-
-
+# ---------- Hàm nhỏ hỗ trợ ----------
 def gui_thu(to, subject, body):
-    """HÀM GIẢ (chờ backend). Trả về (thành công?, thông báo)."""
+    """HÀM GIẢ (backend chưa có phần gửi thư SMTP). Trả về (thành công?, thông báo)."""
     return True, "Gửi thư thành công"
+
+
+def loi_text(e):
+    """Đổi lỗi kỹ thuật của backend thành câu dễ hiểu."""
+    s = str(e)
+    if isinstance(e, MailError):
+        if "login failed" in s:
+            return "Đăng nhập thất bại. Hãy dùng Mật khẩu ứng dụng (16 ký tự) của Gmail."
+        if "Cannot connect" in s:
+            return "Không kết nối được máy chủ Gmail. Hãy kiểm tra mạng."
+    return s or "Có lỗi xảy ra"
+
+
+def gio(date_str, day_full=False):
+    try:
+        dt = parsedate_to_datetime(date_str).astimezone()
+    except Exception:
+        return date_str[:16]
+    if day_full:
+        return dt.strftime("%H:%M, %d/%m/%Y")
+    return dt.strftime("%H:%M") if dt.date() == datetime.now().date() else dt.strftime("%d/%m")
+
+
+def doi_thu(h):
+    """Đổi thư của backend (from, subject, date, uid...) sang dạng giao diện dùng."""
+    name, addr = parseaddr(h["from"])
+    name = name or addr
+    return {"uid": h["uid"], "name": name, "email": addr, "subject": h["subject"], "date": h["date"],
+            "letter": (name[:1] or "?").upper(), "color": COLORS[sum(map(ord, name)) % len(COLORS)]}
+
+
+def html_sang_text(h):
+    h = re.sub(r"(?is)<(script|style).*?</\1>", "", h)
+    h = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", h)
+    h = htmllib.unescape(re.sub(r"<[^>]+>", "", h))
+    return re.sub(r"\n\s*\n+", "\n\n", h).strip()
+
+
+def dung_luong(n):
+    return f"{n / 1024 / 1024:.1f} MB" if n >= 1024 * 1024 else f"{max(1, n // 1024)} KB"
 
 
 def click_all(widget, fn):
@@ -73,10 +84,47 @@ class App(ctk.CTk):
         self.configure(fg_color=BG)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
-        self.current = 0
-        self.email = ""
-        self.mails = []
+        self.current, self.token = 0, 0
+        self.email, self.pw, self.client = "", "", None
+        self.mails, self.cache = [], {}
+        self.lock = threading.Lock()   # imaplib không chạy song song được -> xếp hàng từng việc
+        self.protocol("WM_DELETE_WINDOW", self.dong)
         self.show_login()
+
+    # ---------- Chạy việc mạng ở luồng riêng (giao diện không bị đơ) ----------
+    def chay_nen(self, ham, xong):
+        """Chạy ham() ở luồng riêng. Xong thì gọi xong(kết_quả, lỗi) ở luồng chính."""
+        kq = {}
+
+        def lam():
+            try:
+                with self.lock:
+                    kq["v"] = ham()
+            except Exception as e:
+                kq["e"] = e
+
+        threading.Thread(target=lam, daemon=True).start()
+
+        def cho():
+            if "v" in kq or "e" in kq:
+                xong(kq.get("v"), kq.get("e"))
+            else:
+                self.after(100, cho)
+        cho()
+
+    def goi(self, ten, *a, **k):
+        """Gọi hàm của backend; nếu mất kết nối thì đăng nhập lại rồi thử thêm 1 lần."""
+        try:
+            return getattr(self.client, ten)(*a, **k)
+        except Exception:
+            self.client.logout()
+            self.client.login(self.email, self.pw)
+            return getattr(self.client, ten)(*a, **k)
+
+    def dong(self):
+        if self.client:
+            self.client.logout()
+        self.destroy()
 
     # ---------- Màn hình đăng nhập ----------
     def show_login(self):
@@ -87,11 +135,12 @@ class App(ctk.CTk):
         card.place(relx=0.5, rely=0.5, anchor="center")
         ctk.CTkLabel(card, text="✉  SmartMail", font=("Segoe UI", 28, "bold"),
                      text_color=BLUE).pack(padx=50, pady=(40, 2))
-        ctk.CTkLabel(card, text="Kết nối tài khoản email của bạn", text_color=GRAY).pack(pady=(0, 24))
+        ctk.CTkLabel(card, text="Kết nối tài khoản Gmail của bạn", text_color=GRAY).pack(pady=(0, 24))
 
         self.e_email = ctk.CTkEntry(card, placeholder_text="Email", width=340, height=44)
         self.e_email.pack(pady=6)
-        self.e_pass = ctk.CTkEntry(card, placeholder_text="Mật khẩu", show="•", width=340, height=44)
+        self.e_pass = ctk.CTkEntry(card, placeholder_text="Mật khẩu ứng dụng (16 ký tự)", show="•",
+                                   width=340, height=44)
         self.e_pass.pack(pady=6)
         self.e_pass.bind("<Return>", lambda e: self.on_connect())
 
@@ -105,20 +154,24 @@ class App(ctk.CTk):
         self.status.configure(text=text, text_color=color)
 
     def on_connect(self):
-        email, pw = self.e_email.get().strip(), self.e_pass.get()
+        email, pw = self.e_email.get().strip(), self.e_pass.get().replace(" ", "")
+        if "@" not in email:
+            return self.set_status("✖ Email không hợp lệ", RED)
+        if not pw:
+            return self.set_status("✖ Bạn chưa nhập mật khẩu", RED)
         self.btn.configure(state="disabled", text="Đang kết nối...")
         self.set_status("⏳ Đang kết nối, vui lòng chờ...", GRAY)
-        self.after(1200, lambda: self.finish_connect(email, pw))  # giả lập thời gian chờ
+        self.chay_nen(lambda: ImapClient().login(email, pw),
+                      lambda c, e: self.finish_connect(email, pw, c, e))
 
-    def finish_connect(self, email, pw):
-        ok, msg = ket_noi(email, pw)
-        if ok:
-            self.email = email
-            self.set_status("✔ " + msg, GREEN)
-            self.after(800, self.open_mail)
-        else:
-            self.set_status("✖ " + msg, RED)
+    def finish_connect(self, email, pw, client, err):
+        if err:
+            self.set_status("✖ " + loi_text(err), RED)
             self.btn.configure(state="normal", text="Kết nối")
+        else:
+            self.client, self.email, self.pw = client, email, pw
+            self.set_status("✔ Kết nối thành công", GREEN)
+            self.after(800, self.open_mail)
 
     def open_mail(self):
         self.login.destroy()
@@ -130,26 +183,35 @@ class App(ctk.CTk):
     def load_mails(self):
         for w in self.listbox.winfo_children():
             w.destroy()
+        self.token += 1
         self.notice("⏳ Đang tải thư...", GRAY)
-        self.after(1200, self.finish_load)  # giả lập thời gian chờ
+        self.chay_nen(lambda: self.goi("list_emails", page=1, page_size=30), self.finish_load)
 
-    def finish_load(self):
-        ok, data = lay_thu()
-        if ok:
-            self.mails = data
+    def finish_load(self, r, err):
+        if err:
+            return self.notice("✖ " + loi_text(err), RED, retry=True)
+        self.mails = [doi_thu(h) for h in r["emails"]]
+        self.head_lbl.configure(text=f"Hộp thư đến ({r['total']})")
+        if self.mails:
             self.show(0)
         else:
-            self.notice("✖ " + data, RED, retry=True)
+            self.notice("Hộp thư trống", GRAY)
 
     def notice(self, text, color, retry=False):
         for w in self.detail.winfo_children():
             w.destroy()
         box = ctk.CTkFrame(self.detail, fg_color="transparent")
         box.place(relx=0.5, rely=0.45, anchor="center")
-        ctk.CTkLabel(box, text=text, text_color=color, font=("Segoe UI", 16)).pack(pady=8)
+        ctk.CTkLabel(box, text=text, text_color=color, font=("Segoe UI", 16), wraplength=500).pack(pady=8)
         if retry:
             ctk.CTkButton(box, text="↻  Thử lại", fg_color=BLUE, corner_radius=20,
                           command=self.load_mails).pack(pady=8)
+
+    def back(self):
+        if self.mails:
+            self.show(self.current)
+        else:
+            self.notice("Chọn một thư để đọc", GRAY)
 
     # ---------- Thanh bên trái ----------
     def build_sidebar(self):
@@ -164,20 +226,12 @@ class App(ctk.CTk):
         ctk.CTkButton(sb, text="✎  Soạn thư", height=44, corner_radius=8, fg_color=BLUE,
                       font=("Segoe UI", 14, "bold"), command=self.compose).pack(fill="x", pady=(0, 16))
 
-        for i, (icon, name, count) in enumerate(NAV):
-            self.row(sb, icon, name, count, selected=(i == 0))
-
-    def row(self, parent, icon, name, count, selected=False, icon_color=None):
-        f = ctk.CTkFrame(parent, height=38, corner_radius=8, fg_color=SEL if selected else "transparent")
-        f.pack(fill="x", pady=1)
-        color = icon_color or (BLUE if selected else "#374151")
-        ctk.CTkLabel(f, text=icon, width=28, text_color=color).pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(f, text=name, text_color=BLUE if selected else "#111827",
-                     font=("Segoe UI", 13, "bold" if selected else "normal")).pack(side="left", padx=6)
-        if count:
-            ctk.CTkLabel(f, text=str(count), width=22, height=22, corner_radius=11,
-                         fg_color=SEL if selected else "#eef0f4", text_color=BLUE if selected else GRAY,
-                         font=("Segoe UI", 11)).pack(side="right", padx=8)
+        for i, (icon, name) in enumerate(NAV):
+            f = ctk.CTkFrame(sb, height=38, corner_radius=8, fg_color=SEL if i == 0 else "transparent")
+            f.pack(fill="x", pady=1)
+            ctk.CTkLabel(f, text=icon, width=28, text_color=BLUE if i == 0 else "#374151").pack(side="left", padx=(8, 0))
+            ctk.CTkLabel(f, text=name, text_color=BLUE if i == 0 else "#111827",
+                         font=("Segoe UI", 13, "bold" if i == 0 else "normal")).pack(side="left", padx=6)
 
     # ---------- Khu vực chính ----------
     def build_main(self):
@@ -186,95 +240,140 @@ class App(ctk.CTk):
         main.grid_columnconfigure(1, weight=1)
         main.grid_rowconfigure(1, weight=1)
 
-        # Thanh trên cùng
         top = ctk.CTkFrame(main, fg_color="transparent")
         top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         ctk.CTkEntry(top, placeholder_text="🔍  Tìm kiếm email...", height=42, corner_radius=21,
                      border_width=0, fg_color="#e8eef7", width=500).pack(side="left")
         ctk.CTkLabel(top, text=f"{self.email}  ⌄", text_color="#374151").pack(side="right", padx=8)
 
-        # Danh sách thư
         box = ctk.CTkFrame(main, width=400, fg_color=WHITE, corner_radius=12)
         box.grid(row=1, column=0, sticky="ns", padx=(0, 12))
         box.grid_propagate(False)
-        ctk.CTkLabel(box, text="Hộp thư đến (6)", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=16, pady=14)
+        head = ctk.CTkFrame(box, fg_color="transparent")
+        head.pack(fill="x", padx=16, pady=14)
+        self.head_lbl = ctk.CTkLabel(head, text="Hộp thư đến", font=("Segoe UI", 16, "bold"))
+        self.head_lbl.pack(side="left")
+        ctk.CTkButton(head, text="↻", width=34, height=30, fg_color="transparent", text_color="#111827",
+                      hover_color="#f3f4f6", command=self.load_mails).pack(side="right")
         self.listbox = ctk.CTkScrollableFrame(box, fg_color="transparent")
         self.listbox.pack(fill="both", expand=True)
 
-        # Chi tiết thư
         self.detail = ctk.CTkFrame(main, fg_color=WHITE, corner_radius=12)
         self.detail.grid(row=1, column=1, sticky="nsew")
 
     def render_list(self):
         for w in self.listbox.winfo_children():
             w.destroy()
-        for i, (letter, color, name, _, subject, body, time, _) in enumerate(self.mails):
+        for i, m in enumerate(self.mails):
             item = ctk.CTkFrame(self.listbox, corner_radius=8, fg_color=SEL if i == self.current else "transparent")
             item.pack(fill="x", pady=2)
-            avatar(item, letter, color).grid(row=0, column=0, rowspan=3, padx=10, pady=10, sticky="n")
             item.grid_columnconfigure(1, weight=1)
-            ctk.CTkLabel(item, text=name, font=("Segoe UI", 13, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
-            ctk.CTkLabel(item, text=time, text_color=GRAY, font=("Segoe UI", 11)).grid(row=0, column=2, padx=10)
-            ctk.CTkLabel(item, text=subject, anchor="w", font=("Segoe UI", 12)).grid(row=1, column=1, sticky="w")
-            ctk.CTkLabel(item, text=body.split("\n")[0][:42] + "…", text_color=GRAY, anchor="w",
-                         font=("Segoe UI", 11)).grid(row=2, column=1, sticky="w", pady=(0, 8))
+            avatar(item, m["letter"], m["color"]).grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="n")
+            ctk.CTkLabel(item, text=m["name"][:24], font=("Segoe UI", 13, "bold"), anchor="w").grid(row=0, column=1, sticky="w", pady=(8, 0))
+            ctk.CTkLabel(item, text=gio(m["date"]), text_color=GRAY, font=("Segoe UI", 11)).grid(row=0, column=2, padx=10)
+            ctk.CTkLabel(item, text=m["subject"][:40], anchor="w", font=("Segoe UI", 12)).grid(row=1, column=1, sticky="w", pady=(0, 10))
             click_all(item, lambda i=i: self.show(i))
 
+    # ---------- Đọc thư ----------
     def show(self, i):
-        self.current = i
+        self.token += 1
+        tk, self.current = self.token, i
         self.render_list()
-        letter, color, name, email, subject, body, time, has_att = self.mails[i]
+        m = self.mails[i]
         d = self.detail
         for w in d.winfo_children():
             w.destroy()
 
-        # Tiêu đề
-        head = ctk.CTkFrame(d, fg_color="transparent")
-        head.pack(fill="x", padx=24, pady=(20, 10))
-        ctk.CTkLabel(head, text=subject, font=("Segoe UI", 20, "bold")).pack(side="left")
-        ctk.CTkLabel(head, text="●  Công việc", fg_color=SEL, text_color=BLUE, corner_radius=12,
-                     height=24, font=("Segoe UI", 11)).pack(side="left", padx=12)
+        ctk.CTkLabel(d, text=m["subject"], font=("Segoe UI", 20, "bold"), anchor="w", justify="left",
+                     wraplength=650).pack(fill="x", padx=24, pady=(20, 10))
 
-        # Người gửi
         sender = ctk.CTkFrame(d, fg_color="transparent")
         sender.pack(fill="x", padx=24, pady=10)
-        avatar(sender, letter, color, 48).pack(side="left")
+        avatar(sender, m["letter"], m["color"], 48).pack(side="left")
         info = ctk.CTkFrame(sender, fg_color="transparent")
         info.pack(side="left", padx=12)
-        ctk.CTkLabel(info, text=name, font=("Segoe UI", 14, "bold"), anchor="w").pack(anchor="w")
-        ctk.CTkLabel(info, text=email, text_color=GRAY, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(info, text=m["name"], font=("Segoe UI", 14, "bold"), anchor="w").pack(anchor="w")
+        ctk.CTkLabel(info, text=m["email"], text_color=GRAY, anchor="w").pack(anchor="w")
         ctk.CTkLabel(info, text=f"Đến: {self.email}", text_color=GRAY, anchor="w").pack(anchor="w")
-        ctk.CTkLabel(sender, text=f"{time}, 12/04/2025", text_color=GRAY).pack(side="right", anchor="n")
+        ctk.CTkLabel(sender, text=gio(m["date"], True), text_color=GRAY).pack(side="right", anchor="n")
 
-        # Nội dung
-        ctk.CTkLabel(d, text=body, justify="left", anchor="w", wraplength=600,
-                     font=("Segoe UI", 14)).pack(fill="x", padx=24, pady=20)
-
-        # Đính kèm
-        if has_att:
-            ctk.CTkLabel(d, text="📎  2 tệp đính kèm", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=24)
-            for icon, color, fname, size in [("W", "#2563eb", "BaoCao_TienDo.docx", "1.2 MB"),
-                                             ("PDF", "#ef4444", "Code_SmartMail.zip", "2.8 MB")]:
-                f = ctk.CTkFrame(d, fg_color="transparent", border_width=1, border_color="#e5e7eb", corner_radius=8)
-                f.pack(fill="x", padx=24, pady=6)
-                ctk.CTkLabel(f, text=icon, width=36, height=36, corner_radius=6, fg_color=color,
-                             text_color="white", font=("Segoe UI", 11, "bold")).pack(side="left", padx=12, pady=10)
-                ctk.CTkLabel(f, text=f"{fname}\n{size}", justify="left", anchor="w").pack(side="left")
-                ctk.CTkLabel(f, text="⬇", font=("Segoe UI", 16)).pack(side="right", padx=16)
-
-        # Nút trả lời
+        # Nút trả lời (đặt ở đáy trước để luôn thấy)
         btns = ctk.CTkFrame(d, fg_color="transparent")
         btns.pack(side="bottom", anchor="w", padx=24, pady=24)
-        actions = [("↩  Trả lời", lambda: self.compose(email, "Re: " + subject)),
-                   ("↩↩  Trả lời tất cả", lambda: self.compose(email, "Re: " + subject)),
-                   ("↪  Chuyển tiếp", lambda: self.compose("", "Fwd: " + subject,
-                                                          "\n\n--- Thư chuyển tiếp ---\n" + body))]
+        old = lambda: self.cache.get(m["uid"], {}).get("text", "")
+        actions = [("↩  Trả lời", lambda: self.compose(m["email"], "Re: " + m["subject"])),
+                   ("↩↩  Trả lời tất cả", lambda: self.compose(m["email"], "Re: " + m["subject"])),
+                   ("↪  Chuyển tiếp", lambda: self.compose("", "Fwd: " + m["subject"],
+                                                          "\n\n--- Thư chuyển tiếp ---\n" + old()))]
         for text, cmd in actions:
-            ctk.CTkButton(btns, text=text, command=cmd, corner_radius=20, height=38, fg_color=WHITE, text_color="#111827",
-                          border_width=1, border_color="#d1d5db", hover_color="#f3f4f6").pack(side="left", padx=(0, 10))
+            ctk.CTkButton(btns, text=text, command=cmd, corner_radius=20, height=38, fg_color=WHITE,
+                          text_color="#111827", border_width=1, border_color="#d1d5db",
+                          hover_color="#f3f4f6").pack(side="left", padx=(0, 10))
+
+        # Nội dung: lấy từ backend (get_email), có loading / lỗi
+        self.body_box = ctk.CTkFrame(d, fg_color="transparent")
+        self.body_box.pack(fill="both", expand=True, padx=24, pady=(10, 0))
+        if m["uid"] in self.cache:
+            return self.render_body(m, self.cache[m["uid"]])
+        ctk.CTkLabel(self.body_box, text="⏳ Đang tải nội dung thư...", text_color=GRAY).pack(pady=30)
+        uid = m["uid"]
+        self.chay_nen(lambda: self.goi("get_email", uid), lambda f, e: self.finish_read(tk, m, f, e))
+
+    def finish_read(self, tk, m, f, err):
+        if tk != self.token:   # người dùng đã bấm sang thư khác -> bỏ kết quả này
+            return
+        for w in self.body_box.winfo_children():
+            w.destroy()
+        if err:
+            ctk.CTkLabel(self.body_box, text="✖ " + loi_text(err), text_color=RED, wraplength=600).pack(pady=(30, 8))
+            ctk.CTkButton(self.body_box, text="↻  Thử lại", fg_color=BLUE, corner_radius=20,
+                          command=lambda: self.show(self.current)).pack()
+            return
+        text = f["body_text"].strip() or html_sang_text(f["body_html"]) or "(Thư không có nội dung)"
+        self.cache[m["uid"]] = {"text": text, "attachments": f["attachments"]}
+        self.render_body(m, self.cache[m["uid"]])
+
+    def render_body(self, m, info):
+        box, att = self.body_box, info["attachments"]
+        for w in box.winfo_children():
+            w.destroy()
+
+        if att:
+            af = ctk.CTkFrame(box, fg_color="transparent")
+            af.pack(side="bottom", fill="x")
+            ctk.CTkLabel(af, text=f"📎  {len(att)} tệp đính kèm", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+            for a in att:
+                name = a["filename"]
+                ext = (name.rsplit(".", 1)[-1][:4] if "." in name else "FILE").upper()
+                f = ctk.CTkFrame(af, fg_color="transparent", border_width=1, border_color="#e5e7eb", corner_radius=8)
+                f.pack(fill="x", pady=4)
+                ctk.CTkLabel(f, text=ext, width=40, height=36, corner_radius=6, fg_color="#2563eb",
+                             text_color="white", font=("Segoe UI", 11, "bold")).pack(side="left", padx=12, pady=8)
+                ctk.CTkLabel(f, text=f"{name}\n{dung_luong(a['size'])}", justify="left", anchor="w").pack(side="left")
+                ctk.CTkButton(f, text="⬇", width=40, fg_color="transparent", text_color="#111827",
+                              hover_color="#f3f4f6", font=("Segoe UI", 16),
+                              command=lambda idx=a["index"]: self.tai_dinh_kem(m["uid"], idx)).pack(side="right", padx=10)
+            self.att_status = ctk.CTkLabel(af, text="", wraplength=600, justify="left")
+            self.att_status.pack(anchor="w", pady=(2, 0))
+
+        tb = ctk.CTkTextbox(box, fg_color=WHITE, font=("Segoe UI", 14), wrap="word")
+        tb.pack(fill="both", expand=True, pady=(0, 8))
+        tb.insert("1.0", info["text"])
+        tb.configure(state="disabled")
+
+    def tai_dinh_kem(self, uid, index):
+        self.att_status.configure(text="⏳ Đang tải tệp...", text_color=GRAY)
+
+        def xong(path, err):
+            if self.att_status.winfo_exists():
+                self.att_status.configure(
+                    text=("✖ " + loi_text(err)) if err else f"✔ Đã lưu tại: {path}",
+                    text_color=RED if err else GREEN)
+        self.chay_nen(lambda: self.goi("download_attachment", uid, index, "downloads"), xong)
 
     # ---------- Màn hình soạn thư ----------
     def compose(self, to="", subject="", body=""):
+        self.token += 1
         d = self.detail
         for w in d.winfo_children():
             w.destroy()
@@ -303,7 +402,7 @@ class App(ctk.CTk):
         self.c_send.pack(side="left", padx=(0, 10))
         ctk.CTkButton(bar, text="Hủy", width=100, height=40, corner_radius=20, fg_color=WHITE,
                       text_color="#111827", border_width=1, border_color="#d1d5db",
-                      hover_color="#f3f4f6", command=lambda: self.show(self.current)).pack(side="left")
+                      hover_color="#f3f4f6", command=self.back).pack(side="left")
 
     def on_send(self):
         to, sub, body = self.c_to.get().strip(), self.c_sub.get().strip(), self.c_body.get("1.0", "end").strip()
@@ -313,13 +412,13 @@ class App(ctk.CTk):
             return self.c_status.configure(text="✖ Bạn chưa nhập tiêu đề", text_color=RED)
         self.c_send.configure(state="disabled", text="Đang gửi...")
         self.c_status.configure(text="⏳ Đang gửi thư...", text_color=GRAY)
-        self.after(1000, lambda: self.finish_send(to, sub, body))  # giả lập thời gian chờ
+        self.after(1000, lambda: self.finish_send(to, sub, body))  # giả lập, chờ backend gửi thư
 
     def finish_send(self, to, sub, body):
         ok, msg = gui_thu(to, sub, body)
         if ok:
             self.c_status.configure(text="✔ " + msg, text_color=GREEN)
-            self.after(1000, lambda: self.show(self.current))
+            self.after(1000, self.back)
         else:
             self.c_status.configure(text="✖ " + msg, text_color=RED)
             self.c_send.configure(state="normal", text="➤  Gửi")
