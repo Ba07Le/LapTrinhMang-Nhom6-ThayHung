@@ -5,7 +5,9 @@
 
 # Google OAuth (never commit; share client_secret.json privately)
 client_secret*.json
+**/client_secret.json
 token.json
+**/token.json
 
 # Python virtual environment
 .venv/
@@ -21,6 +23,7 @@ dist/
 # Downloaded email attachments
 downloads/
 backend/downloads/
+*.log
 
 # Wireshark TLS key logs (can decrypt captured traffic)
 *.keys

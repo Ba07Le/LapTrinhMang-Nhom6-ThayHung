@@ -154,7 +154,8 @@ class ImapClient:
                 continue
             flags = m.group(1).lower().split()
             name = m.group(3).strip(b'"').decode(errors="replace")
-            for key, flag in (("sent", b"\\sent"), ("drafts", b"\\drafts"), ("all", b"\\all")):
+            for key, flag in (("sent", b"\\sent"), ("drafts", b"\\drafts"),
+                              ("all", b"\\all"), ("trash", b"\\trash")):
                 if flag in flags:
                     found[key] = name
         return found
@@ -184,17 +185,40 @@ class ImapClient:
         self._select(folder, readonly=False)
         self.conn.uid("STORE", str(uid), "+FLAGS", "(\\Seen)")
 
-    def search(self, keyword=None, sender=None, folder="INBOX", limit=50) -> list[dict]:
+    def search(self, keyword=None, sender=None, subject=None, folder="INBOX",
+               limit=50, unseen_only=False) -> list[dict]:
+        """Search within a folder. Multiple supplied criteria are combined with AND."""
         self._select(folder)
         found = []
         if keyword:
             found.append(set(self._search_text("TEXT", keyword)))
         if sender:
             found.append(set(self._search_text("FROM", sender)))
+        if subject:
+            found.append(set(self._search_text("SUBJECT", subject)))
+        if unseen_only:
+            found.append(set(self._search("UNSEEN")))
         if not found:
             return []
-        uids = sorted(set.intersection(*found), reverse=True)[:limit]
+        matched = set.intersection(*found)
+        uids = sorted(matched, reverse=True)[:max(1, int(limit))]
         return self._fetch_headers(uids)
+
+    def folder_counts(self) -> dict:
+        """Return server-side counts for sidebar badges. Inbox is unread count;
+        other special folders show total message count. Missing folders are omitted."""
+        counts = {"inbox_unread": 0, "sent": 0, "drafts": 0, "all": 0, "trash": 0}
+        counts["inbox_unread"] = len(self._search_in_folder("INBOX", "UNSEEN"))
+        folders = self.special_folders()
+        for key in ("sent", "drafts", "all", "trash"):
+            folder = folders.get(key)
+            if folder:
+                counts[key] = self._select(folder, readonly=True)
+        return counts
+
+    def _search_in_folder(self, folder: str, *criteria) -> list[int]:
+        self._select(folder, readonly=True)
+        return self._search(*criteria)
 
     def latest_uid(self, folder="INBOX") -> int:
         self._select(folder)
@@ -229,6 +253,8 @@ class NewMailWatcher(threading.Thread):
         return c.login_oauth(user, self.token_provider) if self.token_provider else c.login(user, password)
 
     def run(self):
+        # Keep this watermark across reconnects so mail arriving during an outage
+        # is still reported after the connection is restored.
         last = None
         while not self._stop_evt.is_set():
             try:
