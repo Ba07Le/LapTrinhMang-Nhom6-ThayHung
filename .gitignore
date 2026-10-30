@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Google OAuth (never commit; share client_secret.json privately)
+client_secret*.json
+token.json
+
 # Python virtual environment
 .venv/
 venv/

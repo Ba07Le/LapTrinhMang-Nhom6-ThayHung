@@ -18,19 +18,15 @@ import sys
 import time
 
 try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
-try:
     from .imap_client import ImapClient, NewMailWatcher
     from .pop3_client import Pop3Client
     from .mail_utils import MailError
+    from . import oauth_google
 except ImportError:
     from imap_client import ImapClient, NewMailWatcher
     from pop3_client import Pop3Client
     from mail_utils import MailError
+    import oauth_google
 
 
 def show_rows(emails):
@@ -51,11 +47,21 @@ def main():
     ap.add_argument("--dir", default="downloads")
     ap.add_argument("--interval", type=int, default=30)
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--google", action="store_true", help="sign in with Google (IMAP only)")
     a = ap.parse_args()
 
     user, pw = os.environ.get("IMAP_USER"), os.environ.get("IMAP_PASS")
-    if not (user and pw):
-        sys.exit("Set IMAP_USER and IMAP_PASS.")
+    g_email = g_provider = None
+    if a.google:
+        if a.protocol != "imap":
+            sys.exit("--google works with IMAP only")
+        try:
+            g_email, g_provider = oauth_google.login_interactive()
+        except MailError as e:
+            sys.exit(f"Error: {e}")
+        print("Signed in as", g_email)
+    elif not (user and pw):
+        sys.exit("Set IMAP_USER and IMAP_PASS (or use --google).")
     if a.debug:
         imaplib.Debug = 4
     imap_host = os.environ.get("IMAP_HOST", "imap.gmail.com")
@@ -64,7 +70,7 @@ def main():
     if a.cmd == "watch":
         if a.protocol != "imap":
             sys.exit("watch is IMAP only")
-        w = NewMailWatcher(imap_host, 993, user, pw,
+        w = NewMailWatcher(imap_host, 993, g_email or user, pw, token_provider=g_provider,
                            on_new=lambda m: (print("NEW MAIL:"), show_rows(m)),
                            on_error=lambda e: print("watcher stopped:", e), interval=a.interval)
         w.start()
@@ -77,7 +83,10 @@ def main():
         return
 
     try:
-        c = (ImapClient(imap_host) if a.protocol == "imap" else Pop3Client(pop_host)).login(user, pw)
+        if a.google:
+            c = ImapClient(imap_host).login_oauth(g_email, g_provider)
+        else:
+            c = (ImapClient(imap_host) if a.protocol == "imap" else Pop3Client(pop_host)).login(user, pw)
         with c:
             if a.cmd == "folders":
                 print("\n".join(c.list_folders()))

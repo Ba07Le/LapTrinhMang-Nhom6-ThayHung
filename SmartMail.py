@@ -7,6 +7,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 
 import customtkinter as ctk
 
+from backend import oauth_google
 from backend.imap_client import ImapClient, NewMailWatcher   # backend nhận thư của nhóm
 from backend.mail_utils import MailError
 
@@ -31,6 +32,14 @@ def loi_text(e):
     """Đổi lỗi kỹ thuật của backend thành câu dễ hiểu."""
     s = str(e)
     if isinstance(e, MailError):
+        if "client_secret" in s:
+            return "Thiếu file client_secret.json. Hãy tạo OAuth client trên Google Cloud và đặt file ở thư mục gốc của project."
+        if "Google sign-in failed" in s:
+            return "Đăng nhập Google không hoàn tất (hết thời gian hoặc bị hủy). Hãy thử lại."
+        if "OAuth sign-in failed" in s:
+            return "Google từ chối đăng nhập. Hãy bấm 'Dùng tài khoản Google khác' để đăng nhập lại."
+        if "not installed" in s:
+            return "Thiếu thư viện Google. Chạy: pip install -r requirements.txt"
         if "login failed" in s:
             return "Đăng nhập thất bại. Hãy dùng Mật khẩu ứng dụng (16 ký tự) của Gmail."
         if "Cannot connect" in s:
@@ -91,7 +100,7 @@ class App(ctk.CTk):
         self.nav_i, self.folder, self.folders = 0, "INBOX", {}
         self.page, self.total, self.loading_more, self.rows, self.more_btn = 1, 0, False, [], None
         self.watcher, self.new_q, self.new_count = None, queue.Queue(), 0
-        self.email, self.pw, self.client = "", "", None
+        self.email, self.pw, self.client, self.token_provider = "", "", None, None
         self.mails, self.cache = [], {}
         self.lock = threading.Lock()   # imaplib không chạy song song được -> xếp hàng từng việc
         self.protocol("WM_DELETE_WINDOW", self.dong)
@@ -123,8 +132,7 @@ class App(ctk.CTk):
         try:
             return getattr(self.client, ten)(*a, **k)
         except Exception:
-            self.client.logout()
-            self.client.login(self.email, self.pw)
+            self.client.reconnect()
             return getattr(self.client, ten)(*a, **k)
 
     def dong(self):
@@ -155,11 +163,50 @@ class App(ctk.CTk):
         self.btn = ctk.CTkButton(card, text="Kết nối", width=340, height=44, fg_color=BLUE,
                                  font=("Segoe UI", 14, "bold"), command=self.on_connect)
         self.btn.pack(pady=(14, 6))
+
+        ctk.CTkLabel(card, text="──────────  hoặc  ──────────", text_color=GRAY).pack(pady=(4, 8))
+        saved = oauth_google.saved_email()
+        self.btn_g = ctk.CTkButton(card, text="G   " + (f"Tiếp tục với {saved}" if saved else "Đăng nhập bằng Google"),
+                                   width=340, height=44, fg_color=WHITE, text_color="#111827",
+                                   border_width=1, border_color="#d1d5db", hover_color="#f3f4f6",
+                                   font=("Segoe UI", 14, "bold"), command=self.on_google)
+        self.btn_g.pack()
+        self.btn_other = ctk.CTkButton(card, text="Dùng tài khoản Google khác", height=24, fg_color="transparent",
+                                       text_color=GRAY, hover_color="#f3f4f6", font=("Segoe UI", 11),
+                                       command=lambda: self.on_google(True))
+        self.btn_other.pack(pady=(4, 0))
         self.status = ctk.CTkLabel(card, text="", wraplength=340, height=40)
         self.status.pack(pady=(0, 30))
 
     def set_status(self, text, color):
         self.status.configure(text=text, text_color=color)
+
+    def set_busy(self, busy):
+        st = "disabled" if busy else "normal"
+        self.btn.configure(state=st, text="Đang kết nối..." if busy else "Kết nối")
+        self.btn_g.configure(state=st)
+        self.btn_other.configure(state=st)
+
+    # ---------- Đăng nhập bằng Google (OAuth2, không cần mật khẩu ứng dụng) ----------
+    def on_google(self, new_account=False):
+        self.set_busy(True)
+        self.set_status("⏳ Đang mở trình duyệt để đăng nhập Google...\nHãy hoàn tất trong cửa sổ trình duyệt.", GRAY)
+
+        def work():
+            if new_account:
+                oauth_google.sign_out()
+            email, provider = oauth_google.login_interactive()   # lần sau đăng nhập ngầm, không mở trình duyệt
+            return ImapClient().login_oauth(email, provider), email, provider
+        self.chay_nen(work, self.finish_google)
+
+    def finish_google(self, res, err):
+        if err:
+            self.set_status("✖ " + loi_text(err), RED)
+            return self.set_busy(False)
+        self.client, self.email, self.token_provider = res
+        self.pw = ""
+        self.set_status("✔ Đăng nhập Google thành công", GREEN)
+        self.after(800, self.open_mail)
 
     def on_connect(self):
         email, pw = self.e_email.get().strip(), self.e_pass.get().replace(" ", "")
@@ -167,7 +214,7 @@ class App(ctk.CTk):
             return self.set_status("✖ Email không hợp lệ", RED)
         if not pw:
             return self.set_status("✖ Bạn chưa nhập mật khẩu", RED)
-        self.btn.configure(state="disabled", text="Đang kết nối...")
+        self.set_busy(True)
         self.set_status("⏳ Đang kết nối, vui lòng chờ...", GRAY)
         self.chay_nen(lambda: ImapClient().login(email, pw),
                       lambda c, e: self.finish_connect(email, pw, c, e))
@@ -175,7 +222,7 @@ class App(ctk.CTk):
     def finish_connect(self, email, pw, client, err):
         if err:
             self.set_status("✖ " + loi_text(err), RED)
-            self.btn.configure(state="normal", text="Kết nối")
+            self.set_busy(False)
         else:
             self.client, self.email, self.pw = client, email, pw
             self.set_status("✔ Kết nối thành công", GREEN)
@@ -283,6 +330,7 @@ class App(ctk.CTk):
     def start_watcher(self):
         self.watcher = NewMailWatcher("imap.gmail.com", 993, self.email, self.pw,
                                       on_new=self.new_q.put, folder="INBOX", interval=30,
+                                      token_provider=self.token_provider,
                                       on_error=lambda e: print("Watcher stopped:", e))
         self.watcher.start()
         self.after(1000, self.poll_new)

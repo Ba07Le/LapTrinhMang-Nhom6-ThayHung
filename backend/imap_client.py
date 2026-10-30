@@ -19,9 +19,11 @@ class ImapClient:
     def __init__(self, host="imap.gmail.com", port=993, timeout=20):
         self.host, self.port, self.timeout = host, port, timeout
         self.conn = None
+        self._cred = None   # remembered so reconnect() can log in again
 
     # ---- connection -------------------------------------------------
     def login(self, user: str, password: str) -> "ImapClient":
+        self._cred = ("pw", user, password)
         try:
             self.conn = imaplib.IMAP4_SSL(self.host, self.port,
                                           ssl_context=mu.make_ssl_context(), timeout=self.timeout)
@@ -32,6 +34,35 @@ class ImapClient:
         except (OSError, ssl.SSLError) as e:
             raise MailError(f"Cannot connect to {self.host}:{self.port}: {e}") from e
         return self
+
+    def login_oauth(self, user: str, token_provider) -> "ImapClient":
+        """Gmail OAuth2 (XOAUTH2). token_provider() must return a fresh access token."""
+        self._cred = ("oauth", user, token_provider)
+        try:
+            auth = f"user={user}\x01auth=Bearer {token_provider()}\x01\x01".encode()
+            sent = []
+
+            def responder(_challenge):
+                if sent:          # server answered with an error challenge -> end the exchange
+                    return b""
+                sent.append(1)
+                return auth
+
+            self.conn = imaplib.IMAP4_SSL(self.host, self.port,
+                                          ssl_context=mu.make_ssl_context(), timeout=self.timeout)
+            self.conn.authenticate("XOAUTH2", responder)
+        except imaplib.IMAP4.error as e:
+            self.logout()
+            raise MailError(f"IMAP OAuth sign-in failed: {e}") from e
+        except (OSError, ssl.SSLError) as e:
+            raise MailError(f"Cannot connect to {self.host}:{self.port}: {e}") from e
+        return self
+
+    def reconnect(self) -> "ImapClient":
+        """Log in again with whatever was used before (password or Google)."""
+        self.logout()
+        kind, user, secret = self._cred
+        return self.login(user, secret) if kind == "pw" else self.login_oauth(user, secret)
 
     def logout(self):
         if self.conn:
@@ -180,8 +211,10 @@ class NewMailWatcher(threading.Thread):
     Uses its OWN connection; calls on_new(list_of_headers) from the worker thread
     (in Tkinter use root.after / a queue to hop back to the UI thread)."""
 
-    def __init__(self, host, port, user, password, on_new, on_error=None, folder="INBOX", interval=30):
+    def __init__(self, host, port, user, password, on_new, on_error=None, folder="INBOX", interval=30,
+                 token_provider=None):
         super().__init__(daemon=True)
+        self.token_provider = token_provider   # set for Google login (password is then ignored)
         self.args = (host, port, user, password)
         self.on_new, self.on_error = on_new, on_error
         self.folder, self.interval = folder, interval
@@ -190,16 +223,26 @@ class NewMailWatcher(threading.Thread):
     def stop(self):
         self._stop_evt.set()
 
-    def run(self):
+    def _connect(self) -> "ImapClient":
         host, port, user, password = self.args
-        try:
-            with ImapClient(host, port).login(user, password) as c:
-                last = c.latest_uid(self.folder)
-                while not self._stop_evt.wait(self.interval):
-                    new = c.poll_new(self.folder, last)
-                    if new:
-                        last = new[0]["uid"]
-                        self.on_new(new)
-        except Exception as e:
-            if self.on_error:
-                self.on_error(e)
+        c = ImapClient(host, port)
+        return c.login_oauth(user, self.token_provider) if self.token_provider else c.login(user, password)
+
+    def run(self):
+        last = None
+        while not self._stop_evt.is_set():
+            try:
+                with self._connect() as c:
+                    if last is None:
+                        last = c.latest_uid(self.folder)
+                    while not self._stop_evt.wait(self.interval):
+                        new = c.poll_new(self.folder, last)
+                        if new:
+                            last = new[0]["uid"]
+                            self.on_new(new)
+                return
+            except Exception as e:   # network drop, expired session... -> report, retry in a minute
+                if self.on_error:
+                    self.on_error(e)
+                if self._stop_evt.wait(60):
+                    return
