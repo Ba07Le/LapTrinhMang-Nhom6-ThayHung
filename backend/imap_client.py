@@ -48,10 +48,15 @@ class ImapClient:
         self.logout()
 
     # ---- internals --------------------------------------------------
-    def _select(self, folder: str, readonly=True):
-        typ, _ = self.conn.select(f'"{folder}"', readonly=readonly)
+    def _select(self, folder: str, readonly=True) -> int:
+        """Open a folder; returns how many messages it holds."""
+        typ, data = self.conn.select(f'"{folder}"', readonly=readonly)
         if typ != "OK":
             raise MailError(f"Cannot open folder: {folder}")
+        try:
+            return int(data[0])
+        except (TypeError, ValueError, IndexError):
+            return 0
 
     def _search(self, *criteria) -> list[int]:
         typ, data = self.conn.uid("SEARCH", *criteria)
@@ -65,6 +70,13 @@ class ImapClient:
         if not uids:
             return []
         typ, data = self.conn.uid("FETCH", ",".join(map(str, uids)), _HDR_SPEC)
+        return self._parse_header_rows(typ, data)
+
+    def _fetch_headers_seq(self, lo: int, hi: int) -> list[dict]:
+        typ, data = self.conn.fetch(f"{lo}:{hi}", _HDR_SPEC)
+        return self._parse_header_rows(typ, data)
+
+    def _parse_header_rows(self, typ, data) -> list[dict]:
         if typ != "OK":
             raise MailError("FETCH headers failed")
         out = []
@@ -99,12 +111,36 @@ class ImapClient:
                 names.append(m.group(3).strip(b'"').decode(errors="replace"))
         return names
 
+    def special_folders(self) -> dict:
+        """{'sent': name, 'drafts': name, 'all': name} from IMAP special-use flags (any Gmail language)."""
+        _, data = self.conn.list()
+        found = {}
+        for line in data:
+            if not isinstance(line, bytes):
+                continue
+            m = re.match(rb'\((.*?)\) "(.*?)" (.+)', line)
+            if not m:
+                continue
+            flags = m.group(1).lower().split()
+            name = m.group(3).strip(b'"').decode(errors="replace")
+            for key, flag in (("sent", b"\\sent"), ("drafts", b"\\drafts"), ("all", b"\\all")):
+                if flag in flags:
+                    found[key] = name
+        return found
+
     def list_emails(self, folder="INBOX", page=1, page_size=20, unseen_only=False) -> dict:
-        self._select(folder)
-        uids = sorted(self._search("UNSEEN" if unseen_only else "ALL"), reverse=True)
-        start = (page - 1) * page_size
-        return {"total": len(uids), "page": page,
-                "emails": self._fetch_headers(uids[start:start + page_size])}
+        total = self._select(folder)
+        if unseen_only:
+            uids = sorted(self._search("UNSEEN"), reverse=True)
+            start = (page - 1) * page_size
+            return {"total": len(uids), "page": page,
+                    "emails": self._fetch_headers(uids[start:start + page_size])}
+        # Newest first = highest message numbers. Fetch ONLY this page's range, so a mailbox
+        # with thousands of mails costs the same as one with a few dozen.
+        hi = total - (page - 1) * page_size
+        lo = max(1, hi - page_size + 1)
+        emails = self._fetch_headers_seq(lo, hi) if hi >= 1 else []
+        return {"total": total, "page": page, "emails": emails}
 
     def get_email(self, uid: int, folder="INBOX") -> dict:
         return {"uid": uid, **mu.parse_message(self._fetch_raw(uid, folder))}
