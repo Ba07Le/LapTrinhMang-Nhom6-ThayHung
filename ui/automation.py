@@ -123,7 +123,7 @@ class AutomationMixin:
                 buttons=ctk.CTkFrame(line,fg_color='transparent');buttons.pack(side='right',padx=12,pady=12)
                 info=ctk.CTkFrame(line,fg_color='transparent');info.pack(side='left',fill='x',expand=True,padx=14,pady=10)
                 ctk.CTkLabel(info,text=r['subject'] or '(Không có tiêu đề)',font=('Segoe UI',14,'bold'),text_color='#14243A',anchor='w',wraplength=460).pack(fill='x')
-                ctk.CTkLabel(info,text='Đến: '+(r['recipient'] or '(Chưa nhập)')+'  •  '+r['created'][:16].replace('T',' '),font=('Segoe UI',12),text_color='#64748B',anchor='w',wraplength=460).pack(fill='x',pady=(4,0))
+                ctk.CTkLabel(info,text='Đến: '+(r['recipient'] or '(Chưa nhập)')+'  •  '+self._format_history_time(r['created']),font=('Segoe UI',12),text_color='#64748B',anchor='w',wraplength=460).pack(fill='x',pady=(4,0))
                 def open_draft(row=r):
                     self.compose(row['recipient'],row['subject'],row['body'])
                     self.c_attachments=json.loads(row['attachments'])
@@ -176,6 +176,29 @@ class AutomationMixin:
                 ctk.CTkLabel(line,text=r['name']+'  —  '+(r['subject'] or '(Không có tiêu đề)'),font=('Segoe UI',13),text_color='#14243A',anchor='w',wraplength=570).pack(side='left',fill='x',expand=True,padx=12)
         refresh()
 
+    @staticmethod
+    def _format_history_time(value):
+        """Show persisted UTC timestamps in the computer's local time zone.
+
+        Keep the same short-date convention as the normal mail list: today's
+        entries show HH:MM; older entries show HH:MM, DD/MM/YYYY.
+        """
+        if not value:
+            return 'Không rõ thời gian'
+        try:
+            dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                # Older records without an offset are treated as local time.
+                dt = dt.astimezone()
+            else:
+                dt = dt.astimezone()
+            now_local = datetime.now().astimezone()
+            if dt.date() == now_local.date():
+                return dt.strftime('%H:%M')
+            return dt.strftime('%H:%M, %d/%m/%Y')
+        except (ValueError, TypeError, OverflowError):
+            return str(value).replace('T', ' ')[:16]
+
     def open_history(self):
         w=self._window('Lịch gửi và lịch sử | SmartMail');w.geometry('960x730');w.minsize(750,540);w.configure(fg_color='#F3F6FB')
         ctk.CTkLabel(w,text='LỊCH GỬI VÀ LỊCH SỬ EMAIL',font=('Segoe UI',22,'bold'),text_color='#14243A').pack(anchor='w',padx=24,pady=(18,3))
@@ -193,10 +216,7 @@ class AutomationMixin:
             for r in rows:
                 line=ctk.CTkFrame(area,fg_color='#F6F9FE',corner_radius=10);line.pack(fill='x',padx=10,pady=6)
                 info=ctk.CTkFrame(line,fg_color='transparent');info.pack(side='left',fill='x',expand=True,padx=14,pady=10)
-                date=r['due'] if is_jobs else r['created'];date=date[:16].replace('T',' ')
-                if is_jobs:
-                    try:date=datetime.fromisoformat(r['due']).astimezone().strftime('%d/%m/%Y %H:%M')
-                    except (ValueError,TypeError):pass
+                date = self._format_history_time(r['due'] if is_jobs else r['created'])
                 ctk.CTkLabel(info,text=r['subject'] or '(Không có tiêu đề)',font=('Segoe UI',14,'bold'),text_color='#14243A',anchor='w',wraplength=590).pack(fill='x')
                 ctk.CTkLabel(info,text=f"Đến: {r['recipient']}  |  {date}",font=('Segoe UI',12),text_color='#64748B',anchor='w',wraplength=590).pack(fill='x',pady=(3,0))
                 ctk.CTkLabel(info,text='Trạng thái: '+statuses.get(r['status'],r['status']),font=('Segoe UI',12,'bold'),text_color='#2563EB' if r['status'] in ('pending','accepted','sent') else '#B45309',anchor='w').pack(fill='x',pady=(3,0))

@@ -44,7 +44,7 @@ class SearchMixin:
             return
         if err:
             return self.notice("✖ " + loi_text(err), RED, retry=True)
-        self.mails = [doi_thu(h) for h in r]
+        self.mails = [doi_thu(h, sent=(self.nav_i == 1)) for h in r]
         self.current, self.total = -1, len(r)
         self.head_lbl.configure(text=f"Kết quả {label} ({len(r)})")
         self.render_list()

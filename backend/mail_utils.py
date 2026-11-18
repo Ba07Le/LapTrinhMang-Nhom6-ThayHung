@@ -34,6 +34,8 @@ def parse_headers(raw: bytes) -> dict:
     msg = email.message_from_bytes(raw, policy=policy.default)
     return {
         "from": str(msg["from"] or ""),
+        "to": str(msg["to"] or ""),
+        "cc": str(msg["cc"] or ""),
         "subject": str(msg["subject"] or "(no subject)"),
         "date": str(msg["date"] or ""),
     }

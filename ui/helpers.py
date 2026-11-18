@@ -2,7 +2,7 @@
 import html as htmllib
 import re
 from datetime import datetime
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import parseaddr, getaddresses, parsedate_to_datetime
 
 import customtkinter as ctk
 
@@ -43,11 +43,19 @@ def gio(date_str, day_full=False):
     return dt.strftime("%H:%M") if dt.date() == datetime.now().date() else dt.strftime("%d/%m")
 
 
-def doi_thu(h):
+def doi_thu(h, sent=False):
     """Đổi thư của backend (from, subject, date, uid...) sang dạng giao diện dùng."""
-    name, addr = parseaddr(h["from"])
-    name = name or addr
-    return {"uid": h["uid"], "name": name, "email": addr, "subject": h["subject"], "date": h["date"], "seen": h.get("seen", True),
+    sender_name, sender_addr = parseaddr(h.get("from", ""))
+    # In Sent, display the actual recipient(s), not the account that sent the message.
+    recipients = [addr for _, addr in getaddresses([h.get("to", "")]) if addr]
+    if sent:
+        addr = recipients[0] if recipients else ""
+        name = (", ".join(recipients) if recipients else "(Không có người nhận)")
+    else:
+        addr = sender_addr
+        name = sender_name or sender_addr or "(Không rõ người gửi)"
+    return {"uid": h["uid"], "name": name, "email": addr, "sender_email": sender_addr,
+            "to": h.get("to", ""), "cc": h.get("cc", ""), "recipients": recipients, "is_sent": sent, "subject": h["subject"], "date": h["date"], "seen": h.get("seen", True),
             "letter": (name[:1] or "?").upper(), "color": COLORS[sum(map(ord, name)) % len(COLORS)]}
 
 

@@ -10,7 +10,7 @@ except ImportError:  # running as a plain script
     import mail_utils as mu
 
 MailError = mu.MailError
-_HDR_SPEC = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])"
+_HDR_SPEC = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)])"
 
 
 class ImapClient:

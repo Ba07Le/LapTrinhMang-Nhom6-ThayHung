@@ -5,6 +5,7 @@ from tkinter import messagebox
 from email.utils import getaddresses
 from ui.constants import BLUE, GRAY, GREEN, RED, WHITE
 from ui.helpers import avatar, dung_luong, gio, html_sang_text, loi_text
+from backend.html_support import looks_like_html, sanitize_email_html, html_to_plain
 
 
 class ReaderMixin:
@@ -26,16 +27,26 @@ class ReaderMixin:
         avatar(sender, m["letter"], m["color"], 48).pack(side="left")
         info = ctk.CTkFrame(sender, fg_color="transparent")
         info.pack(side="left", padx=12)
-        ctk.CTkLabel(info, text=m["name"], font=("Segoe UI", 14, "bold"), anchor="w").pack(anchor="w")
-        ctk.CTkLabel(info, text=m["email"], text_color=GRAY, anchor="w").pack(anchor="w")
-        ctk.CTkLabel(info, text=f"Đến: {self.email}", text_color=GRAY, anchor="w").pack(anchor="w")
+        # Always show the real From and To headers; never assume To is the logged-in account.
+        if m.get("is_sent"):
+            display_name = self.email
+            display_email = m.get("sender_email") or self.email
+        else:
+            display_name = m["name"]
+            display_email = m["email"]
+        ctk.CTkLabel(info, text=display_name, font=("Segoe UI", 14, "bold"), anchor="w").pack(anchor="w")
+        ctk.CTkLabel(info, text=display_email, text_color=GRAY, anchor="w").pack(anchor="w")
+        recipient_label = ctk.CTkLabel(info, text="Đến: " + (m.get("to") or "Đang tải người nhận..."),
+                                       text_color=GRAY, anchor="w", justify="left", wraplength=680)
+        recipient_label.pack(anchor="w")
+        self._recipient_label = recipient_label
         ctk.CTkLabel(sender, text=gio(m["date"], True), text_color=GRAY).pack(side="right", anchor="n")
 
         # Nút trả lời (đặt ở đáy trước để luôn thấy)
         btns = ctk.CTkFrame(d, fg_color="transparent")
         btns.pack(fill="x", padx=24, pady=(4, 12))
         old = lambda: self.cache.get(m["uid"], {}).get("text", "")
-        actions = [("↩  Trả lời", lambda: self.compose(m["email"], "Re: " + m["subject"], "\n\n--- Thư gốc ---\n"+old())),
+        actions = [("↩  Trả lời", lambda: self.compose((m.get("email") if m.get("is_sent") else m["email"]), "Re: " + m["subject"], "\n\n--- Thư gốc ---\n"+old())),
                    ("↩↩  Trả lời tất cả", lambda: self.reply_all(m)),
                    ("↪  Chuyển tiếp", lambda: self.compose("", "Fwd: " + m["subject"],
                                                           "\n\n--- Thư chuyển tiếp ---\n" + old()))]
@@ -57,7 +68,9 @@ class ReaderMixin:
         self.body_box = ctk.CTkFrame(d, fg_color="transparent")
         self.body_box.pack(fill="both", expand=True, padx=24, pady=(10, 0))
         if m["uid"] in self.cache:
-            return self.render_body(m, self.cache[m["uid"]])
+            cached = self.cache[m["uid"]]
+            recipient_label.configure(text="Đến: " + (cached.get("to") or m.get("to") or "(Không có người nhận)"))
+            return self.render_body(m, cached)
         ctk.CTkLabel(self.body_box, text="⏳ Đang tải nội dung thư...", text_color=GRAY).pack(pady=30)
         uid, folder = m["uid"], self.folder
         self.chay_nen(lambda: self.goi("get_email", uid, folder=folder), lambda f, e: self.finish_read(tk, m, f, e))
@@ -72,9 +85,19 @@ class ReaderMixin:
             ctk.CTkButton(self.body_box, text="↻  Thử lại", fg_color=BLUE, corner_radius=20,
                           command=lambda: self.show(self.current)).pack()
             return
-        text = f["body_text"].strip() or html_sang_text(f["body_html"]) or "(Thư không có nội dung)"
+        raw_text = f["body_text"].strip()
+        raw_html = f["body_html"].strip()
+        # Legacy emails may have been sent with raw HTML inside text/plain.
+        # Render those too, but keep their plain-text alternative readable.
+        if not raw_html and looks_like_html(raw_text):
+            raw_html = raw_text
+            raw_text = ""
+        text = raw_text or html_to_plain(raw_html) or "(Thư không có nội dung)"
+        # The full RFC 5322 To header is authoritative, including multiple recipients.
+        if self._recipient_label.winfo_exists():
+            self._recipient_label.configure(text="Đến: " + (f.get("to") or "(Không có người nhận)"))
         recipients=[addr for _,addr in getaddresses([f.get('to',''),f.get('cc','')])]
-        self.cache[m["uid"]] = {"text": text, "attachments": f["attachments"],"recipients":recipients}
+        self.cache[m["uid"]] = {"text": text, "html": raw_html, "attachments": f["attachments"],"recipients":recipients, "to": f.get("to", ""), "from": f.get("from", "")}
         self.render_body(m, self.cache[m["uid"]])
         if not m["seen"]:   # đánh dấu đã đọc trên Gmail
             m["seen"] = True
@@ -106,10 +129,47 @@ class ReaderMixin:
             self.att_status = ctk.CTkLabel(af, text="", wraplength=600, justify="left")
             self.att_status.pack(anchor="w", pady=(2, 0))
 
-        tb = ctk.CTkTextbox(box, fg_color=WHITE, font=("Segoe UI", 14), wrap="word")
-        tb.pack(fill="both", expand=True, pady=(0, 8))
-        tb.insert("1.0", info["text"])
-        tb.configure(state="disabled")
+        html_source = info.get("html", "")
+        view = ctk.CTkFrame(box, fg_color="transparent")
+        view.pack(fill="both", expand=True, pady=(0, 8))
+        mode_bar = ctk.CTkFrame(view, fg_color="transparent")
+        mode_bar.pack(fill="x", pady=(0, 5))
+        content_area = ctk.CTkFrame(view, fg_color="transparent")
+        content_area.pack(fill="both", expand=True)
+
+        def show_plain():
+            for child in content_area.winfo_children():
+                child.destroy()
+            tb = ctk.CTkTextbox(content_area, fg_color=WHITE, font=("Segoe UI", 14), wrap="word")
+            tb.pack(fill="both", expand=True)
+            tb.insert("1.0", info["text"])
+            tb.configure(state="disabled")
+
+        def show_html():
+            for child in content_area.winfo_children():
+                child.destroy()
+            try:
+                from tkinterweb import HtmlFrame
+                frame = HtmlFrame(content_area, messages_enabled=False)
+                frame.pack(fill="both", expand=True)
+                frame.load_html(sanitize_email_html(html_source))
+            except Exception as exc:
+                # Keep the email readable even without the optional HTML renderer.
+                for child in content_area.winfo_children():
+                    child.destroy()
+                show_plain()
+                ctk.CTkLabel(mode_bar, text="Không thể hiển thị HTML. Cài tkinterweb để bật chế độ HTML.",
+                             text_color=RED, font=("Segoe UI", 11)).pack(side="left", padx=8)
+
+        if html_source:
+            ctk.CTkButton(mode_bar, text="Xem HTML", width=110, height=30,
+                          command=show_html).pack(side="left", padx=(0, 6))
+            ctk.CTkButton(mode_bar, text="Xem văn bản", width=115, height=30,
+                          fg_color="#eaf1ff", text_color=BLUE,
+                          command=show_plain).pack(side="left")
+            show_html()
+        else:
+            show_plain()
 
     def tai_dinh_kem(self, uid, index):
         self.att_status.configure(text="⏳ Đang tải tệp...", text_color=GRAY)
@@ -125,7 +185,8 @@ class ReaderMixin:
     def reply_all(self,m):
         info=self.cache.get(m['uid'],{})
         others=info.get('recipients',[])
-        addresses=[m['email']]+[x for x in others if x.lower() not in (m['email'].lower(),self.email.lower())]
+        primary = m.get('email', '')
+        addresses=([primary] if primary and primary.lower() != self.email.lower() else []) + [x for x in others if x.lower() not in (primary.lower(), self.email.lower())]
         self.compose(', '.join(dict.fromkeys(addresses)),'Re: '+m['subject'],'\n\n--- Thư gốc ---\n'+info.get('text',''))
 
     def move_selected(self,m,restore=False):

@@ -10,6 +10,8 @@ from email.utils import getaddresses, make_msgid
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .html_support import html_to_plain
+
 try:
     from .mail_utils import MailError
     from .smtp_client import SMTPClient
@@ -72,7 +74,7 @@ def build_message(sender: str, recipients: str, subject: str, body: str,
     msg["Subject"] = subject
     msg["Date"] = datetime.now(timezone.utc).astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
     msg["Message-ID"] = make_msgid()
-    plain_body = body or " "
+    plain_body = (html_to_plain(html_body) or "Nội dung HTML") if html_body is not None else (body or " ")
     msg.set_content(plain_body)
     # The compose screen is plain text; include a safe HTML alternative so HTML-capable clients
     # render line breaks cleanly without interpreting user-entered text as markup.

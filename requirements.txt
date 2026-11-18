@@ -2,3 +2,5 @@ customtkinter
 python-dotenv
 google-auth-oauthlib
 openpyxl>=3.1,<4
+
+tkinterweb>=4.0,<5

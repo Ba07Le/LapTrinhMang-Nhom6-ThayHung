@@ -43,7 +43,7 @@ class MailListMixin:
             return self.notice("✖ " + loi_text(err), RED, retry=True)
         self.folder, r = res[0], res[1]
         self.cache = {}
-        self.mails = [doi_thu(h) for h in r["emails"]]
+        self.mails = [doi_thu(h, sent=(nav == 1)) for h in r["emails"]]
         self.current, self.page, self.total = -1, 1, min(r["total"], MAX_LOAD)
         cnt = f"{MAX_LOAD}+" if r["total"] > MAX_LOAD else str(r["total"])
         self.head_lbl.configure(text=f"{NAV[nav][1]} ({cnt})")
@@ -82,7 +82,7 @@ class MailListMixin:
         self.page = page
         have = {m["uid"] for m in self.mails}
         start = len(self.mails)
-        self.mails += [doi_thu(h) for h in r["emails"] if h["uid"] not in have]
+        self.mails += [doi_thu(h, sent=(self.nav_i == 1)) for h in r["emails"] if h["uid"] not in have]
         del self.mails[MAX_LOAD:]   # trang cuối có thể vượt giới hạn
         self.append_rows(start)
 
@@ -133,7 +133,7 @@ class MailListMixin:
                 break
             mail = self.mails[i]
             prefix = "● " if not mail["seen"] else ""
-            nm.configure(text=self._fit_text(prefix + mail["name"], available, name_font))
+            nm.configure(text=self._fit_text(prefix + ("Đến: " if mail.get("is_sent") else "") + mail["name"], available, name_font))
             sj.configure(text=self._fit_text(mail["subject"], available,
                                              normal_font if mail["seen"] else bold_font))
 
@@ -158,7 +158,7 @@ class MailListMixin:
         item.pack(fill="x", pady=3, padx=3)
         item.grid_columnconfigure(1, weight=1)
         avatar(item, m["letter"], m["color"]).grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="n")
-        nm = ctk.CTkLabel(item, text=("● " if not m["seen"] else "") + m["name"],
+        nm = ctk.CTkLabel(item, text=("● " if not m["seen"] else "") + ("Đến: " if m.get("is_sent") else "") + m["name"],
                           font=("Segoe UI", 13, "bold"), anchor="w")
         nm.grid(row=0, column=1, sticky="ew", pady=(8, 0))
         ctk.CTkLabel(item, text=gio(m["date"]), text_color=GRAY, font=("Segoe UI", 11)).grid(row=0, column=2, padx=10)
