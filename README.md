@@ -1,6 +1,6 @@
 > Đồ án cuối kỳ môn **Lập trình mạng** — Đề tài nhóm
 
-# Hệ Thống Email Tự Động (SMTP/POP3/IMAP)
+# ỨNG DỤNG QUẢN LÝ EMAIL SỬ DỤNG SMTP VÀ IMAP
 
 ## 1. Thông tin nhóm
 
