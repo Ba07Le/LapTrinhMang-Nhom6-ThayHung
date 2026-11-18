@@ -230,6 +230,26 @@ class ImapClient:
         return self._fetch_headers(sorted(uids, reverse=True))
 
 
+    def mark_unseen(self, uid: int, folder='INBOX'):
+        self._select(folder,readonly=False)
+        typ,_=self.conn.uid('STORE',str(uid),'-FLAGS.SILENT','(\\Seen)')
+        if typ!='OK':raise MailError('Không thể đánh dấu chưa đọc')
+
+    def _move(self, uid, source, target):
+        if not target:raise MailError('Không tìm thấy thư mục đích')
+        if source==target:raise MailError('Thư đã ở thư mục đích')
+        self._select(source,readonly=False)
+        # Gmail supports MOVE; fallback COPY + Deleted + EXPUNGE is not used to avoid deleting other mail.
+        typ,_=self.conn.uid('MOVE',str(uid),f'"{target}"')
+        if typ!='OK':raise MailError('Máy chủ không hỗ trợ MOVE hoặc từ chối thao tác')
+
+    def trash_email(self,uid,folder='INBOX'):
+        self._move(uid,folder,self.special_folders().get('trash'))
+
+    def restore_email(self,uid,folder=None):
+        source=folder or self.special_folders().get('trash')
+        self._move(uid,source,'INBOX')
+
 class NewMailWatcher(threading.Thread):
     """Background polling for the 'new mail notification' feature.
     Uses its OWN connection; calls on_new(list_of_headers) from the worker thread

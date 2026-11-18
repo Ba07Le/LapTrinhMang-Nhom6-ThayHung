@@ -1,6 +1,8 @@
 """Đọc thư: hiển thị nội dung, tệp đính kèm và các nút trả lời / chuyển tiếp."""
 import customtkinter as ctk
 
+from tkinter import messagebox
+from email.utils import getaddresses
 from ui.constants import BLUE, GRAY, GREEN, RED, WHITE
 from ui.helpers import avatar, dung_luong, gio, html_sang_text, loi_text
 
@@ -17,7 +19,7 @@ class ReaderMixin:
             w.destroy()
 
         ctk.CTkLabel(d, text=m["subject"], font=("Segoe UI", 20, "bold"), anchor="w", justify="left",
-                     wraplength=650).pack(fill="x", padx=24, pady=(20, 10))
+                     wraplength=850).pack(fill="x", padx=24, pady=(20, 10))
 
         sender = ctk.CTkFrame(d, fg_color="transparent")
         sender.pack(fill="x", padx=24, pady=10)
@@ -31,16 +33,25 @@ class ReaderMixin:
 
         # Nút trả lời (đặt ở đáy trước để luôn thấy)
         btns = ctk.CTkFrame(d, fg_color="transparent")
-        btns.pack(side="bottom", anchor="w", padx=24, pady=24)
+        btns.pack(fill="x", padx=24, pady=(4, 12))
         old = lambda: self.cache.get(m["uid"], {}).get("text", "")
-        actions = [("↩  Trả lời", lambda: self.compose(m["email"], "Re: " + m["subject"])),
-                   ("↩↩  Trả lời tất cả", lambda: self.compose(m["email"], "Re: " + m["subject"])),
+        actions = [("↩  Trả lời", lambda: self.compose(m["email"], "Re: " + m["subject"], "\n\n--- Thư gốc ---\n"+old())),
+                   ("↩↩  Trả lời tất cả", lambda: self.reply_all(m)),
                    ("↪  Chuyển tiếp", lambda: self.compose("", "Fwd: " + m["subject"],
                                                           "\n\n--- Thư chuyển tiếp ---\n" + old()))]
-        for text, cmd in actions:
-            ctk.CTkButton(btns, text=text, command=cmd, corner_radius=20, height=38, fg_color=WHITE,
-                          text_color="#111827", border_width=1, border_color="#d1d5db",
-                          hover_color="#f3f4f6").pack(side="left", padx=(0, 10))
+        actions.append(('🗑  Xóa / Thùng rác',lambda: self.move_selected(m,restore=False)))
+        if self.nav_i==4:
+            actions.append(('↩  Khôi phục',lambda: self.move_selected(m,restore=True)))
+        actions.append(('Chưa đọc',lambda: self.mark_selected_unread(m)))
+        for index, (text, cmd) in enumerate(actions):
+            row = index // 3
+            column = index % 3
+            ctk.CTkButton(btns, text=text, command=cmd, corner_radius=8, height=36,
+                          font=("Segoe UI", 12), fg_color="#eef4ff",
+                          text_color="#1c4f94", hover_color="#dceaff").grid(
+                              row=row, column=column, sticky="ew", padx=4, pady=4)
+        for col in range(3):
+            btns.grid_columnconfigure(col, weight=1)
 
         # Nội dung: lấy từ backend (get_email), có loading / lỗi
         self.body_box = ctk.CTkFrame(d, fg_color="transparent")
@@ -62,7 +73,8 @@ class ReaderMixin:
                           command=lambda: self.show(self.current)).pack()
             return
         text = f["body_text"].strip() or html_sang_text(f["body_html"]) or "(Thư không có nội dung)"
-        self.cache[m["uid"]] = {"text": text, "attachments": f["attachments"]}
+        recipients=[addr for _,addr in getaddresses([f.get('to',''),f.get('cc','')])]
+        self.cache[m["uid"]] = {"text": text, "attachments": f["attachments"],"recipients":recipients}
         self.render_body(m, self.cache[m["uid"]])
         if not m["seen"]:   # đánh dấu đã đọc trên Gmail
             m["seen"] = True
@@ -88,7 +100,7 @@ class ReaderMixin:
                 ctk.CTkLabel(f, text=ext, width=40, height=36, corner_radius=6, fg_color="#2563eb",
                              text_color="white", font=("Segoe UI", 11, "bold")).pack(side="left", padx=12, pady=8)
                 ctk.CTkLabel(f, text=f"{name}\n{dung_luong(a['size'])}", justify="left", anchor="w").pack(side="left")
-                ctk.CTkButton(f, text="⬇", width=40, fg_color="transparent", text_color="#111827",
+                ctk.CTkButton(f, text="Tải về", width=72, fg_color="transparent", text_color="#111827",
                               hover_color="#f3f4f6", font=("Segoe UI", 16),
                               command=lambda idx=a["index"]: self.tai_dinh_kem(m["uid"], idx)).pack(side="right", padx=10)
             self.att_status = ctk.CTkLabel(af, text="", wraplength=600, justify="left")
@@ -109,3 +121,25 @@ class ReaderMixin:
                     text_color=RED if err else GREEN)
         folder = self.folder
         self.chay_nen(lambda: self.goi("download_attachment", uid, index, "downloads", folder=folder), xong)
+
+    def reply_all(self,m):
+        info=self.cache.get(m['uid'],{})
+        others=info.get('recipients',[])
+        addresses=[m['email']]+[x for x in others if x.lower() not in (m['email'].lower(),self.email.lower())]
+        self.compose(', '.join(dict.fromkeys(addresses)),'Re: '+m['subject'],'\n\n--- Thư gốc ---\n'+info.get('text',''))
+
+    def move_selected(self,m,restore=False):
+        if not messagebox.askyesno('Xác nhận','Khôi phục về Inbox?' if restore else 'Chuyển email vào Thùng rác?'):return
+        uid,folder=m['uid'],self.folder
+        op='restore_email' if restore else 'trash_email'
+        def done(result,err):
+            if err:messagebox.showerror('Lỗi IMAP',str(err))
+            else:self.load_mails(auto_open=False);self.refresh_nav_counts()
+        self.chay_nen(lambda:self.goi(op,uid,folder=folder),done)
+
+    def mark_selected_unread(self,m):
+        uid,folder=m['uid'],self.folder
+        def done(result,err):
+            if err:messagebox.showerror('Lỗi IMAP',str(err))
+            else:self.load_mails(auto_open=False);self.refresh_nav_counts()
+        self.chay_nen(lambda:self.goi('mark_unseen',uid,folder=folder),done)

@@ -1,5 +1,6 @@
 """Danh sách thư: tải, phân trang, vẽ từng dòng và thông báo trạng thái."""
 import customtkinter as ctk
+from tkinter import font as tkfont
 
 from backend.mail_utils import MailError
 from ui.constants import BLUE, GRAY, MAX_LOAD, NAV, PAGE_SIZE, RED, SEL
@@ -91,6 +92,50 @@ class MailListMixin:
             w.destroy()
         self.rows, self.more_btn = [], None
         self.append_rows(0)
+        # Cập nhật nhãn theo độ rộng thực khi người dùng kéo thanh chia.
+        self.listbox.bind("<Configure>", self._on_list_resize, add="+")
+        self.listbox.after_idle(self._resize_row_labels)
+
+    def _on_list_resize(self, event):
+        width = event.width
+        if width != getattr(self, "_last_list_width", None):
+            self._last_list_width = width
+            self._resize_row_labels()
+
+    @staticmethod
+    def _fit_text(text, available, font):
+        """Cắt chữ theo số pixel hiện có, không cắt cố định 19/35 ký tự."""
+        text = str(text or "")
+        if available <= 0:
+            return ""
+        if font.measure(text) <= available:
+            return text
+        dots = "…"
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if font.measure(text[:mid] + dots) <= available:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo] + dots
+
+    def _resize_row_labels(self):
+        if not getattr(self, "rows", None):
+            return
+        # Chừa avatar, ngày tháng, khoảng đệm và scrollbar.
+        available = max(50, self.listbox.winfo_width() - 160)
+        name_font = tkfont.Font(family="Segoe UI", size=13, weight="bold")
+        normal_font = tkfont.Font(family="Segoe UI", size=12)
+        bold_font = tkfont.Font(family="Segoe UI", size=12, weight="bold")
+        for i, (_, nm, sj) in enumerate(self.rows):
+            if i >= len(self.mails):
+                break
+            mail = self.mails[i]
+            prefix = "● " if not mail["seen"] else ""
+            nm.configure(text=self._fit_text(prefix + mail["name"], available, name_font))
+            sj.configure(text=self._fit_text(mail["subject"], available,
+                                             normal_font if mail["seen"] else bold_font))
 
     def append_rows(self, start):
         """Chỉ tạo thêm các dòng mới (CustomTkinter vẽ chậm nên không tạo lại cả danh sách)."""
@@ -99,6 +144,7 @@ class MailListMixin:
             self.more_btn = None
         for i in range(start, len(self.mails)):
             self.rows.append(self.add_row(i, self.mails[i]))
+        self._resize_row_labels()
         left = self.total - len(self.mails)
         if left > 0 and self.mails:
             self.more_btn = ctk.CTkButton(self.listbox, text=f"↓  Tải thêm ({left} thư cũ hơn)", height=36,
@@ -108,17 +154,17 @@ class MailListMixin:
             self.more_btn.pack(pady=10)
 
     def add_row(self, i, m):
-        item = ctk.CTkFrame(self.listbox, corner_radius=8, fg_color=SEL if i == self.current else "transparent")
-        item.pack(fill="x", pady=2)
+        item = ctk.CTkFrame(self.listbox, corner_radius=10, fg_color=SEL if i == self.current else "#ffffff")
+        item.pack(fill="x", pady=3, padx=3)
         item.grid_columnconfigure(1, weight=1)
         avatar(item, m["letter"], m["color"]).grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="n")
-        nm = ctk.CTkLabel(item, text=("● " if not m["seen"] else "") + m["name"][:24],
+        nm = ctk.CTkLabel(item, text=("● " if not m["seen"] else "") + m["name"],
                           font=("Segoe UI", 13, "bold"), anchor="w")
-        nm.grid(row=0, column=1, sticky="w", pady=(8, 0))
+        nm.grid(row=0, column=1, sticky="ew", pady=(8, 0))
         ctk.CTkLabel(item, text=gio(m["date"]), text_color=GRAY, font=("Segoe UI", 11)).grid(row=0, column=2, padx=10)
-        sj = ctk.CTkLabel(item, text=m["subject"][:40], anchor="w",
+        sj = ctk.CTkLabel(item, text=m["subject"], anchor="w",
                           font=("Segoe UI", 12, "normal" if m["seen"] else "bold"))
-        sj.grid(row=1, column=1, sticky="w", pady=(0, 10))
+        sj.grid(row=1, column=1, sticky="ew", pady=(0, 10))
         click_all(item, lambda i=i: self.show(i))
         return item, nm, sj
 
@@ -132,8 +178,9 @@ class MailListMixin:
         if i < len(self.rows):
             _, nm, sj = self.rows[i]
             m = self.mails[i]
-            nm.configure(text=("● " if not m["seen"] else "") + m["name"][:24])
+            nm.configure(text=("● " if not m["seen"] else "") + m["name"])
             sj.configure(font=("Segoe UI", 12, "normal" if m["seen"] else "bold"))
+            self._resize_row_labels()
 
     # ---------- Thông báo ở khung bên phải ----------
     def notice(self, text, color, retry=False):

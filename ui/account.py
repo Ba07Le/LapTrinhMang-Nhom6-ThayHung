@@ -21,7 +21,7 @@ class AccountMixin:
             self, fg_color=WHITE, corner_radius=10,
             border_width=1, border_color="#d1d5db", width=260
         )
-        self.account_menu.place(relx=0.99, rely=0.115, anchor="ne")
+        self.account_menu.place(relx=0.99, rely=0.090, anchor="ne")
         self.account_menu.lift()
         ctk.CTkLabel(
             self.account_menu, text=self.email, text_color=GRAY,

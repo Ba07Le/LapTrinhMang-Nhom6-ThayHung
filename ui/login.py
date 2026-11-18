@@ -101,3 +101,4 @@ class LoginMixin:
         self.load_mails(auto_open=False)
         self.refresh_nav_counts()
         self.start_watcher()
+        self.start_scheduler()

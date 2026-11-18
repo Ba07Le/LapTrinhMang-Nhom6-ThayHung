@@ -3,6 +3,7 @@ import threading
 
 import customtkinter as ctk
 
+from ui.automation import AutomationMixin
 from ui.account import AccountMixin
 from ui.composer import ComposerMixin
 from ui.constants import BG
@@ -16,12 +17,13 @@ from ui.watcher import WatcherMixin
 ctk.set_appearance_mode("light")
 
 
-class App(LoginMixin, AccountMixin, LayoutMixin, MailListMixin,
+class App(AutomationMixin, LoginMixin, AccountMixin, LayoutMixin, MailListMixin,
           SearchMixin, WatcherMixin, ReaderMixin, ComposerMixin, ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("SmartMail - Email Client")
-        self.geometry("1280x780")
+        self.geometry("1440x860")
+        self.minsize(1100, 700)
         self.configure(fg_color=BG)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -66,6 +68,7 @@ class App(LoginMixin, AccountMixin, LayoutMixin, MailListMixin,
             return getattr(self.client, ten)(*a, **k)
 
     def dong(self):
+        self._scheduler_active = False
         if self.watcher:
             self.watcher.stop()
         if self.client:

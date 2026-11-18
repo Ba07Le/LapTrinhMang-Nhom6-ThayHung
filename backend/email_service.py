@@ -52,7 +52,7 @@ def _safe_header(value: str, field_name: str) -> str:
 
 
 def build_message(sender: str, recipients: str, subject: str, body: str,
-                  attachments: Iterable[str] = (), cc: str = "") -> tuple[EmailMessage, list[str]]:
+                  attachments: Iterable[str] = (), cc: str = "", html_body: str | None = None) -> tuple[EmailMessage, list[str]]:
     sender = sender.strip()
     if not _EMAIL_RE.fullmatch(sender):
         raise MailError("Địa chỉ Gmail người gửi không hợp lệ.")
@@ -76,8 +76,8 @@ def build_message(sender: str, recipients: str, subject: str, body: str,
     msg.set_content(plain_body)
     # The compose screen is plain text; include a safe HTML alternative so HTML-capable clients
     # render line breaks cleanly without interpreting user-entered text as markup.
-    html_body = "<html><body><div style=\"white-space:pre-wrap;font-family:Arial,sans-serif\">" + html.escape(plain_body) + "</div></body></html>"
-    msg.add_alternative(html_body, subtype="html")
+    default_html = "<html><body><div style=\"white-space:pre-wrap;font-family:Arial,sans-serif\">" + html.escape(plain_body) + "</div></body></html>"
+    msg.add_alternative(html_body if html_body is not None else default_html, subtype="html")
 
     total_size = 0
     for raw_path in attachments or ():
@@ -104,8 +104,8 @@ def build_message(sender: str, recipients: str, subject: str, body: str,
 def send_email(*, sender: str, to: str, subject: str, body: str,
                attachments: Iterable[str] = (), password: str | None = None,
                token_provider: Callable[[], str] | None = None,
-               cc: str = "", smtp_client: SMTPClient | None = None) -> dict:
+               cc: str = "", smtp_client: SMTPClient | None = None, html_body: str | None = None) -> dict:
     """Send one email. Gmail SMTP acceptance is not a guarantee of inbox placement."""
-    message, recipients = build_message(sender, to, subject, body, attachments, cc)
+    message, recipients = build_message(sender, to, subject, body, attachments, cc, html_body)
     client = smtp_client or SMTPClient()
     return client.send(sender, recipients, message, password=password, token_provider=token_provider)
